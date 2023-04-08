@@ -1,0 +1,212 @@
+{{ define "layout" }}
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Simple image sorting app</title>
+  <link href="https://fonts.googleapis.com/css?family=Lato:400,700" rel="stylesheet" type="text/css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body onload="load()">
+  <script>
+    var Image = {
+      uuid: null,
+    }
+
+    var LastImage = null
+
+    async function loadImage(image) {
+      console.log(loadImage.name + ": " + image)
+      const displayImage = document.getElementById("image");
+      // Fetch next image raw data from endpoint
+      const response = await fetch('/img/get?uuid=' + image['uuid']);
+      const blob = await response.blob();
+      // Display new image
+      displayImage.src = URL.createObjectURL(blob);
+    }
+    
+    async function loadInfo() {
+      // Fetch next image raw data from endpoint
+      const response = await fetch('/info/get');
+      const data = await response.json();
+
+      function getContainerFromBucket(bucketPosition) {
+        if (bucketPosition == "left") {
+          return document.getElementById("button-container-left");
+        } else if (bucketPosition == "right") {
+          return document.getElementById("button-container-right");
+        } else {
+          console.error("Unknown bucket: ", bucketPosition);
+          return null;
+        }
+      }
+
+      function getNextButtonId() {
+        const buttons = document.querySelectorAll('button[id^="button"]');
+        return "button" + buttons.length;
+      }
+
+      function addButton(container, name) {
+        nextId = getNextButtonId()
+        console.log(addButton.name + ": container=" + container + " name=" + name + " nextId = " + nextId);
+        const button = document.createElement("button");
+        button.innerText = name;
+        button.id = nextId;
+        button.addEventListener("click", function() {
+          handleButtonClick(name);
+        });
+        container.appendChild(button);
+      }
+
+      // Loop through json keys (bucket positions)
+      for (const bucketPosition in data) {
+        if (data.hasOwnProperty(bucketPosition)) {
+          const bucketArr = data[bucketPosition];
+          // Loop through bucket names
+          for (let i = 0; i < bucketArr.length; i++) {
+            const container = getContainerFromBucket(bucketPosition);
+            // Add a button for each bucket
+            addButton(container, bucketArr[i]);
+          }
+        }
+      }
+    }
+
+    async function finished() {
+      console.log(finished.name + ": finished!")
+      const displayImage = document.getElementById("image");
+      displayImage.src = "";
+    }
+    
+    async function getNextImage() {
+      const response = await fetch('/img/next');
+      const data = await response.json();
+      
+      if (Object.keys(data).length === 0) {
+        console.log(getNextImage.name + ": no next image!");
+        return null;
+      }
+      
+      var image = {}
+      
+      // Fill the image variable according to global Image schema
+      // This checks if JSON keys aligns with Image keys
+      for (let key in Image) {
+        if (data.hasOwnProperty(key)) {
+          image[key] = data[key];
+        } else {
+          throw "Key not found";
+        }
+      }
+      
+      console.log(getNextImage.name + ": " + image);
+      return image;
+    }
+
+    async function putImageInBucket(image, bucket) {
+      const params = new URLSearchParams();
+
+      // Save last image
+      LastImage = image;
+      // Enable the undo button
+      document.getElementById('buttonUndo').disabled = false;
+
+      uuid = image['uuid'];
+
+      params.set('uuid', uuid);
+      params.set('bucket', bucket);
+
+      // Send POST request to API endpoint
+      const response = await fetch('/bucket/set', {
+        method: 'POST',
+        body: params,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      });
+
+      return response.ok;
+    }
+
+    async function undo() {
+      console.log(handleButtonClick.name + " LastImage=" + LastImage);
+      if (LastImage != null) {
+        const params = new URLSearchParams();
+
+        uuid = LastImage['uuid']
+        params.set('uuid', uuid);
+
+        // Send POST request to API endpoint
+        const response = await fetch('/bucket/undo', {
+          method: 'POST',
+          body: params,
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        });
+
+        if (!response.ok) {
+          console.error("Request to undo failed")
+        } else {
+          // Load last image
+          await loadImage(LastImage);
+          // Reset last image
+          Image = LastImage;
+          LastImage = null;
+          // Disable undo button
+          document.getElementById('buttonUndo').disabled = true;
+        }
+      }
+    }
+
+    async function actionChooseBucket(bucket) {
+      if (!await putImageInBucket(Image, bucket)) {
+        console.error(handleButtonClick.name + ": putting image into a bucket failed");
+      } else {
+        // Load next image
+        Image = await getNextImage()
+        if (Image == null) {
+          finished();
+        } else {
+          await loadImage(Image);
+        }
+      }
+    }
+
+    async function handleButtonClick(value) {
+      event.preventDefault();
+      console.log(handleButtonClick.name + ": value=" + value);
+      if (value == "undo") {
+        undo()
+      } else {
+        actionChooseBucket(value)
+      }
+    }
+
+    async function load() {
+      loadInfo();
+      Image = await getNextImage();
+      if (Image == null) {
+        finished();
+      } else {
+        await loadImage(Image);
+      }
+    }
+
+  </script>
+  <div id="container">
+    <div id="button-container-left">
+      <button id="buttonUndo" onclick="handleButtonClick('undo')" disabled="true">Undo</button>
+    </div>
+    <div id="image-container">
+      <img id="image" src="">
+    </div>
+    <div id="button-container-right">
+    </div>
+  </div>
+</body>
+
+</html>
+
+{{ end }}
